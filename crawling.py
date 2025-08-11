@@ -4,7 +4,6 @@ import fitz
 import requests
 import subprocess
 import re
-import sys
 from pathlib import Path
 from typing import List
 from PIL import Image
