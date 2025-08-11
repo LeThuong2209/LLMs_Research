@@ -116,11 +116,18 @@ def download_pdf(pdf_link, output_dir):
     except Exception as e:
         print(f"[x] Fail to download {pdf_link}: {e}")
 
-def build_prompt(text: str):
+def build_prompt(text: str, main_title = ""):
+    title_hint = ""
+    if main_title:
+        title_hint = f"\nThe title of the paper has already been identified as: \"{main_title}\".\nUse this title exactly in the output.\n"
+
     return f"""You are an AI specialized in analyzing academic papers. 
         Your task is to process one page of a PDF file, read its extracted text, and identify the following information:
 
-        1. The title of the academic paper.
+        1. The main title of the entire academic paper (NOT a section title or heading in this page):
+            - Usually the largest text at the top of the first page, before the abstract/introduction.
+            - NEVER use subsection titles such as "Abstract" or "Introduction" as the Title.
+            - If not visible in the given text, use the known title or infer from context.{title_hint}
         2. The variables the paper using
         3. The theories used in the paper
         4. The hypotheses used in the paper
@@ -130,7 +137,7 @@ def build_prompt(text: str):
         8. The limitation of the research
 
         Output exactly one line of TSV with 8 columns separated by tabs (\t), in this order:
-        Title;Variables;Theories;Hypotheses;Methodology;Dataset(s);Results;Limitation
+        Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
 
         NEVER output contains a header row. 
         If any field except Title is not found, leave it blank but keep the semicolons.
@@ -138,16 +145,18 @@ def build_prompt(text: str):
         If any field contains a semicolon, enclose it in double quotes.
         Do NOT output any explanation or extra text.
 
+        The title is usually the main heading of the documents in the FIRST page.
+
         ### Example Input Text:
-        "This study explores the relationship between employee satisfaction and productivity. 
-        Using Herzberg's Two-Factor Theory, we hypothesize that increased job satisfaction 
-        positively impacts productivity. Data were collected from 200 employees in the IT sector 
-        using a structured questionnaire. The findings show a strong correlation between satisfaction 
+        "Employee Satisfaction and Productivity
+        This study explores the relationship between employee satisfaction and productivity.
+        Using Herzberg's Two-Factor Theory, we hypothesize that increased job satisfaction
+        positively impacts productivity. Data were collected from 200 employees in the IT sector
+        using a structured questionnaire. The findings show a strong correlation between satisfaction
         and productivity, but limitations include a small sample size and focus only on one sector."
 
         ### Example Correct Output:
-        "Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory\t
-        Job satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector"
+        Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector
 
         Now, process the following extracted text and produce ONLY the TSV line as per rules above:
         {text}
@@ -214,12 +223,34 @@ def extract_page_text(pdf_path, page_number):
         print(f"[📝] Page {page_number + 1}: Digital text detected (length: {len(digital_text)}).")
         return digital_text
     
+def is_important_page(page_text: str) -> bool:
+    keywords = [
+        r"\babstract\b", r"\bintroduction\b",
+        r"\bmethod(?:ology|s|ological)?\b",  # match method, methods, methodology
+        r"\bmaterials?\s+and\s+methods\b",
+        r"\bresults?\b", r"\bfindings?\b",
+        r"\bdiscussion\b",
+        r"\bconclusions?\b", r"\bsummary\b",
+        r"\blimitations?\b", r"\bfuture\s+work\b"
+    ]
+    if len(page_text) < 100:
+        return False
+    if page_text.strip() == "":
+        return False
+    if page_text.lower().startswith("references"):
+        return False
+    for kw in keywords:
+        if re.search(kw, page_text, flags=re.IGNORECASE):
+            return True
+    return False
+
 def extracted(pdf_path: Path):
     """
     Process a single PDF, scan important pages, call Ollama, return a list of extracted rows ["title;variables;theories;hypotheses;methodology;dataset(s);results;limitation."].
     """
 
     page_infos = []
+    main_title = ""
     try:
         doc = fitz.open(pdf_path)
         num_pages = doc.page_count
@@ -228,36 +259,50 @@ def extracted(pdf_path: Path):
         print(f"[❌] CRITICAL: Could not open PDF '{pdf_path.name}'. Skipping. Error: {e}")
         return []
     
-    keywords = [
-        "abstract", "introduction", "methodology", "methods", "results", 
-        "findings", "discussion", "conclusion", "limitations", "limitation"
-    ]
-
     print(f"\n[*] PDF has {num_pages} pages. Scanning all pages and extracting info...")
     for page in range(num_pages):
         print(f"-- Page {page + 1}/{num_pages} --")
 
         page_text = extract_page_text(pdf_path, page)
-        page_text = page_text.lower()
+        page_text_lower = page_text.lower()
+        
+        if is_important_page(page_text_lower):
+            clean_text = " ".join(page_text.split())
+            
+            if page == 0:
+                prompt_for_title = build_prompt(clean_text)
+                for attempt in range(3):
+                    response = call_ollama(prompt_for_title, OLLAMA_MODEL)
+                    if is_valid_response(response):
+                        print(f"  [✅] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
+                        # Add the valid rows to our list for this PDF
+                        page_infos.append(response.strip())
+                        parsed = next(csv.reader([response], delimiter="\t"))
+                        if parsed and parsed[0].strip():
+                            main_title = parsed[0].strip()
+                        break
+                    else:
+                        print(f"  [🔁] Invalid response on attempt {attempt + 1}/3. Retrying...")
+                        if response: 
+                            print(f"    (Invalid Response Sample: {response.strip()[:100]}...)")
+                        time.sleep(2)
+                continue
 
-        if (page == 0 or any(kw in page_text for kw in keywords)) and len(page_text) > 100:
-            prompt = build_prompt(page_text)
+            if main_title:
+                clean_text = f"TITLE_OF_PAPER: {main_title}\n\n{clean_text}"
+            prompt = build_prompt(clean_text, main_title)
             for attempt in range(3):
                 response = call_ollama(prompt, OLLAMA_MODEL)
                 if is_valid_response(response):
-                    print(f"  [✅] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
-                    # Add the valid rows to our list for this PDF
+                    print(f"  [✅] Valid data extracted from page {page + 1}")
                     page_infos.append(response.strip())
-                    break  # Success, move to the next page
+                    break
                 else:
-                    print(f"  [🔁] Invalid response on attempt {attempt + 1}/3. Retrying...")
-                    if response: 
-                        print(f"    (Invalid Response Sample: {response.strip()[:100]}...)")
+                    print(f"  [🔁] Retry attempt {attempt + 1}/3")
                     time.sleep(2)
-            else:  # This 'else' belongs to the 'for' loop, executing if it never 'break's
-                print(f"  [❌] Failed to get valid data from page {page + 1} after 3 attempts.")
+            else:
+                print("[x] Failed to extract valid info.")
         else:
-            print("This page does not contain valid information.")
             print("[->] Skipping calling Ollama")
     if not page_infos:
         return ""
@@ -282,13 +327,14 @@ def extracted(pdf_path: Path):
     Now, aggregate the actual extracted rows provided above into exactly ONE final TSV row with 8 columns in the same order.
 
     Formatting Rules:
-    - The Title column MUST NOT be empty.
+    - The Title column MUST NOT be empty(prefer using: {main_title if main_title else '[No title found]'}).
     - Merge duplicate or overlapping data without repeating identical items.
     - Keep the order of columns EXACTLY as:
     Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
     - If a column has multiple distinct values, separate them with semicolons.
     - Columns may be empty if no information was found.
     - Do **NOT** add any explanation or header row.
+    - If you cannot find the valid information from whole academic paper for which column, fill in the column: "Not Found".
     """
 
     final_row = call_ollama(aggregate_prompt, OLLAMA_MODEL)
@@ -318,30 +364,21 @@ def main():
     for link in pdf_links:
         download_pdf(link, output_dir)
     
-    all_rows = []
-    for pdf_file in Path(output_dir).glob("*.pdf"):
-        row = extracted(pdf_file)
-        if row:
-            all_rows.append(row)
-
     with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter='\t')  # Dùng tab thay vì ;
         writer.writerow([
             "Title", "Variables", "Theories", "Hypotheses",
             "Methodology", "Dataset(s)", "Results", "Limitation"
         ])
-        for row in all_rows:
-            row = row.strip()
-            if not row:
-                continue
-            if row.lower().startswith("title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation"):
-                continue 
-            if row.count('\t') < 7:
-                continue  
-            # parse dữ liệu gốc ngăn cách bởi \t và ghi ra dưới dạng TSV
+
+    for pdf_file in Path(output_dir).glob("*.pdf"):
+        row = extracted(pdf_file)
+        row = row.strip()
+        # parse dữ liệu gốc ngăn cách bởi \t và ghi ra dưới dạng TSV
+        with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f, delimiter='\t')  # Dùng tab thay vì ;
             parsed = next(csv.reader([row], delimiter='\t'))
-            if len(parsed) == 8:
-                writer.writerow(parsed)
+            writer.writerow(parsed)
 
 if __name__ == '__main__':
     main()
