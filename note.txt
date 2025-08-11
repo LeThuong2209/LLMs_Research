@@ -1,0 +1,5 @@
+To repair:
+    cd this_folder's path
+    pip install -r requirments.txt
+To run this code:
+    python3 crawling.py

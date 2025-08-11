@@ -1,0 +1,10 @@
+requests
+PyMuPDF
+pytesseract
+pdf2image
+Pillow
+selenium
+webdriver-manager
+beautifulsoup4
+crawl4ai
+asyncio
