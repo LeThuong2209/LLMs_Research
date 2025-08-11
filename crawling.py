@@ -140,8 +140,7 @@ def build_prompt(text: str, main_title = ""):
         Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
 
         NEVER output contains a header row. 
-        If any field except Title is not found, leave it blank but keep the semicolons.
-        If Title cannot be confidently found, guess it from context or use the main heading on the first page.
+        If any field is not found, leave it blank but keep the semicolons.
         If any field contains a semicolon, enclose it in double quotes.
         Do NOT output any explanation or extra text.
 
@@ -374,10 +373,12 @@ def main():
     for pdf_file in Path(output_dir).glob("*.pdf"):
         row = extracted(pdf_file)
         row = row.strip()
-        # parse dữ liệu gốc ngăn cách bởi \t và ghi ra dưới dạng TSV
-        with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
+        if not row:
+            continue
+        row = row.replace("\r", " ").replace("\n", " ")
+        parsed = next(csv.reader([row], delimiter='\t'))
+        with open("paper.tsv", "a", encoding="utf-8", newline="") as f: 
             writer = csv.writer(f, delimiter='\t')  # Dùng tab thay vì ;
-            parsed = next(csv.reader([row], delimiter='\t'))
             writer.writerow(parsed)
 
 if __name__ == '__main__':
