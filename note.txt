@@ -5,4 +5,4 @@ To run this code:
     python3 crawling.py
 Output: a json file with all pdf links that collected
         a pdf_save folder that saves all pdf files collected from links
-        a paper.tsv that contain the information.
+        a paper.tsv that contains the information.
