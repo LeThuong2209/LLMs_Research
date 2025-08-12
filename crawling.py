@@ -42,7 +42,7 @@ def create_extractor_agent(model_name="mistral"):
     ===== RULES =====
     1. Output **only one single line** with 8 columns, separated by **tab characters ('\t')**.
     2. If a field is not found, write exactly: **Not Found** (do NOT leave blank).
-    3. If multiple values exist, separate them with **semicolon (';')** — no extra spaces before or after the semicolon.
+    3. If multiple values exist in ONE COLUMN, separate them with **semicolon (';')** — no extra spaces before or after the semicolon.
     4. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
     5. Column meanings:
        - **Title**: Full paper title (or main topic if partial title found).
@@ -58,14 +58,14 @@ def create_extractor_agent(model_name="mistral"):
     ===== Example Input =====
     "Employee Satisfaction and Productivity
     This study explores the relationship between employee satisfaction and productivity.
-    Using Herzberg's Two-Factor Theory, we hypothesize that increased job satisfaction
+    Using Herzberg's Two-Factor Theory and A Theory, we hypothesize that increased job satisfaction
     positively impacts productivity. Data were collected from 200 employees in the IT sector
     using a structured questionnaire. The findings show a strong correlation between satisfaction
     and productivity, but limitations include a small sample size and focus only on one sector."
 
     ===== Example Correct Output =====
-    Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector
-
+    "Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory; A Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector"
+                                                  
     ===== Now process this text and produce ONLY the TSV line: =====
     {text}
     """)
@@ -93,21 +93,25 @@ def create_aggregator_agent(model_name="mistral"):
     ===== RULES =====
     1. Output **only one single line** with 8 columns, separated by *tab characters ('\t')**.
     2. The **Title** column: Always use exactly "{title_hint}" if provided (even if other rows have different titles).
-    3. For all other columns:
+    3. For each column:
        - Merge all unique, non-empty values found across rows.
        - Separate multiple values with **semicolon (';')** — no extra spaces before/after the semicolon.
        - Remove duplicates but keep different phrasings.
     4. If nothing found for a column, write exactly: **Not Found**.
     5. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
     6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
-
+    7. DO NOT include "Here is the output based on the rules you provided: " or something like that.
+    8. If a column contain "Not Found" and the different answer, prefer the latter.
+                                                    
+    REMEMBER: separating columns by tabs('\t')
+                                                    
     ===== Example Input =====
-    Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\tStrong correlation found\tSmall sample size.
-    Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector
+    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\tStrong correlation found\tSmall sample size."
+    "Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector"
 
     ===== Example Correct Output =====
-    Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector
-
+    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector"
+                                                    
     ===== Rows to process =====
     {rows}
     """)
@@ -292,6 +296,7 @@ def extracted(pdf_path: Path):
                     parts = tsv_line.split("\t")
                     if parts and parts[0].strip() != "Not Found":
                         main_title = parts[0].strip()
+                print("[->] Valid infor extracted")
         else:
             print("Skip...")
     doc.close()
@@ -340,6 +345,7 @@ def main():
         if not row:
             continue
         row = row.replace("\r", " ").replace("\n", " ")
+        row = row.replace('"', '')
         with open("paper.tsv", "a", encoding="utf-8", newline="") as f:
             f.write(row + '\n')
 
