@@ -25,7 +25,7 @@ from langchain_ollama import ChatOllama
 from langchain.prompts import PromptTemplate
 
 OLLAMA_MODEL = 'llama3'
-OLLAMA_TIMEOUT = 300 
+OLLAMA_TIMEOUT = 400 
 
 # =====Agent 1: Extractor Agent=====
 def create_extractor_agent(model_name=OLLAMA_MODEL):
@@ -37,12 +37,12 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
     Your task:
     Read the given text (from 1 page of a research paper) and output **EXACTLY one line** in TSV format with **8 columns in this exact order**:
 
-    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
+    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tFindings\tLimitation
 
     ===== RULES =====
     1. Output **only one single line** with 8 columns, separated by **tab characters ('\t')**.
     2. If a field is not found, write exactly: **Not Found** (do NOT leave blank).
-    3. If multiple values exist in ONE COLUMN, separate them with **semicolon (';')** — no extra spaces before or after the semicolon.
+    3. If multiple values exist in ONE COLUMN, separate them with **semicolon (';')** — no extra spaces before semicolon.
     4. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
     5. Column meanings:
        - **Title**: Full paper title (or main topic if partial title found).
@@ -51,9 +51,10 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
        - **Hypotheses**: Research hypotheses or predictions stated in the text.
        - **Methodology**: Research design/method (e.g., survey, experiment, case study).
        - **Dataset(s)**: Information about the dataset — sample size, source, demographic, etc.
-       - **Results**: Main findings, correlations, or conclusions.
+       - **Findings**: Main findings, correlations, or conclusions.
        - **Limitation**: Study limitations, weaknesses, or constraints.
     6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
+    7. ONLY including the information, not repeating the title.
 
     ===== Example Input =====
     "Employee Satisfaction and Productivity
@@ -65,11 +66,14 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
 
     ===== Example Correct Output =====
     "Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory; A Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector"
-                                                  
+    
+    ===== Example Wrong Output =====      
+    "Here is the output based on the rules you provided: Employee Satisfaction and Productivity\tThe Variables: Employee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research; Structured interviews\t200 employees in IT sector\tStrong correlation found; Positive relationship observed\tSmall sample size; Only one sector"
+                                                      
     ===== Now process this text and produce ONLY the TSV line: =====
     {text}
     """)
-
+    
     def extractor(page_text: str) -> str:
         prompt = extract_prompt.format(text=page_text)
         response = llm.invoke(prompt).content.strip()
@@ -86,22 +90,21 @@ def create_aggregator_agent(model_name=OLLAMA_MODEL):
     You are an AI that aggregates multiple TSV rows extracted from different pages of the same research paper.
 
     Your task:
-    Merge the given rows into **ONE single TSV line** with the same **8 columns in this exact order**:
+    Merge the given rows into **ONE single TSV line** with the same 8 columns in this exact order:
 
-    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
+    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tFindings\tLimitation
 
     ===== RULES =====
     1. Output **only one single line** with 8 columns, separated by *tab characters ('\t')**.
     2. The **Title** column: Always use exactly "{title_hint}" if provided (even if other rows have different titles).
     3. For each column:
        - Merge all unique, non-empty values found across rows.
-       - Separate multiple values with **semicolon (';')** — no extra spaces before/after the semicolon.
+       - Separate multiple values with **semicolon (';')** — no extra spaces before the semicolon.
        - Remove duplicates but keep different phrasings.
-    4. If nothing found for a column, write exactly: **Not Found**.
+    4. If NOTHING found for a column, write exactly: 'Not Found'.
     5. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
     6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
-    7. DO NOT include "Here is the output based on the rules you provided: " or something like that.
-    8. If a column contain "Not Found" and the different answer, prefer the latter.
+    7. DO NOT include "Here is the output based on the rules you provided:" or something like that, just include the information.
                                                     
     REMEMBER: separating columns by tabs('\t')
                                                     
@@ -110,8 +113,11 @@ def create_aggregator_agent(model_name=OLLAMA_MODEL):
     "Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector"
 
     ===== Example Correct Output =====
-    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector"
-                                                    
+    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research; Structured interviews\t200 employees in IT sector\tStrong correlation found; Positive relationship observed\tSmall sample size; Only one sector"
+
+    ===== Example Wrong Output =====      
+    "Here is the output based on the rules you provided: Employee Satisfaction and Productivity\tThe Variables: Employee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research; Structured interviews\t200 employees in IT sector\tStrong correlation found; Positive relationship observed\tSmall sample size; Only one sector"
+                                                               
     ===== Rows to process =====
     {rows}
     """)
@@ -168,6 +174,7 @@ def get_urls(key_word, pages = 3):
         driver.quit()
 
 async def get_pdf(urls):
+    print('\n')
     async with AsyncWebCrawler() as crawler:
         list1 = []
         for i in urls:
@@ -357,7 +364,7 @@ def main():
         download_pdf(link, output_dir)
 
     headers = ["Title", "Variables", "Theories", "Hypotheses",
-            "Methodology", "Dataset(s)", "Results", "Limitation"]
+            "Methodology", "Dataset(s)", "Findings", "Limitation"]
 
     with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter='\t')
