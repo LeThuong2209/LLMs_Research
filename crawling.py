@@ -21,9 +21,102 @@ import time
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from crawl4ai import AsyncWebCrawler
+from langchain_ollama import ChatOllama
+from langchain.prompts import PromptTemplate
 
 OLLAMA_MODEL = 'mistral'
 OLLAMA_TIMEOUT = 300 
+
+# =====Agent 1: Extractor Agent=====
+def create_extractor_agent(model_name="mistral"):
+    llm = ChatOllama(model=model_name)
+
+    extract_prompt = PromptTemplate.from_template("""
+    You are an AI specialized in analyzing academic papers.
+
+    Your task:
+    Read the given text (from 1 page of a research paper) and output **EXACTLY one line** in TSV format with **8 columns in this exact order**:
+
+    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
+
+    ===== RULES =====
+    1. Output **only one single line** with 8 columns, separated by **tab characters ('\t')**.
+    2. If a field is not found, write exactly: **Not Found** (do NOT leave blank).
+    3. If multiple values exist, separate them with **semicolon (';')** — no extra spaces before or after the semicolon.
+    4. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
+    5. Column meanings:
+       - **Title**: Full paper title (or main topic if partial title found).
+       - **Variables**: All studied variables or factors (independent, dependent, control, etc.).
+       - **Theories**: Theories, models, or conceptual frameworks used.
+       - **Hypotheses**: Research hypotheses or predictions stated in the text.
+       - **Methodology**: Research design/method (e.g., survey, experiment, case study).
+       - **Dataset(s)**: Information about the dataset — sample size, source, demographic, etc.
+       - **Results**: Main findings, correlations, or conclusions.
+       - **Limitation**: Study limitations, weaknesses, or constraints.
+    6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
+
+    ===== Example Input =====
+    "Employee Satisfaction and Productivity
+    This study explores the relationship between employee satisfaction and productivity.
+    Using Herzberg's Two-Factor Theory, we hypothesize that increased job satisfaction
+    positively impacts productivity. Data were collected from 200 employees in the IT sector
+    using a structured questionnaire. The findings show a strong correlation between satisfaction
+    and productivity, but limitations include a small sample size and focus only on one sector."
+
+    ===== Example Correct Output =====
+    Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector
+
+    ===== Now process this text and produce ONLY the TSV line: =====
+    {text}
+    """)
+
+    def extractor(page_text: str) -> str:
+        prompt = extract_prompt.format(text=page_text)
+        response = llm.invoke(prompt).content.strip()
+        return response
+
+    return extractor
+
+
+# =====Agent 2: Aggregator Agent=====
+def create_aggregator_agent(model_name="mistral"):
+    llm = ChatOllama(model=model_name)
+
+    aggregate_prompt = PromptTemplate.from_template("""
+    You are an AI that aggregates multiple TSV rows extracted from different pages of the same research paper.
+
+    Your task:
+    Merge the given rows into **ONE single TSV line** with the same **8 columns in this exact order**:
+
+    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
+
+    ===== RULES =====
+    1. Output **only one single line** with 8 columns, separated by *tab characters ('\t')**.
+    2. The **Title** column: Always use exactly "{title_hint}" if provided (even if other rows have different titles).
+    3. For all other columns:
+       - Merge all unique, non-empty values found across rows.
+       - Separate multiple values with **semicolon (';')** — no extra spaces before/after the semicolon.
+       - Remove duplicates but keep different phrasings.
+    4. If nothing found for a column, write exactly: **Not Found**.
+    5. Do NOT include quotes, explanations, bullet points, or headers — just the raw TSV row.
+    6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
+
+    ===== Example Input =====
+    Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\tStrong correlation found\tSmall sample size.
+    Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector
+
+    ===== Example Correct Output =====
+    Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector
+
+    ===== Rows to process =====
+    {rows}
+    """)
+
+    def aggregator(tsv_rows: List[str], title_hint: str = "") -> str:
+        prompt = aggregate_prompt.format(rows="\n".join(tsv_rows), title_hint=title_hint)
+        return llm.invoke(prompt).content.strip()
+
+    return aggregator
 
 def get_urls(key_word, pages = 3):
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
@@ -113,81 +206,11 @@ def download_pdf(pdf_link, output_dir):
     except Exception as e:
         print(f"Fail to download {pdf_link}: {e}")
 
-def build_prompt(text: str, main_title = ""):
-    title_hint = ""
-    if main_title:
-        title_hint = f"\nThe title of the paper has already been identified as: \"{main_title}\".\nUse this title exactly in the output.\n"
-
-    return f"""You are an AI specialized in analyzing academic papers. 
-        Your task is to process one page of a PDF file, read its extracted text, and identify the following information:
-
-        1. The main title of the entire academic paper (NOT a section title or heading in this page):
-            - Usually the largest text at the top of the first page, before the abstract/introduction.
-            - NEVER use subsection titles such as "Abstract" or "Introduction" as the Title.
-            - If not visible in the given text, use the known title or infer from context.{title_hint}
-        2. The variables the paper using
-        3. The theories used in the paper
-        4. The hypotheses used in the paper
-        5. The methodology that the paper use to research
-        6. The dataset(s) used in the research, if mentioned.
-        7. The last findings of the research
-        8. The limitation of the research
-
-        Output EXACTLY one line of TSV with 8 columns separated by tabs (\t), no more, no less, in this order:
-        Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
-
-        NEVER output contains a header row. 
-        NEVER output contains the content of the header row, only contains the info.
-        DO NOT contains the unrelevant information.
-
-        If any field is not found, write "Not Found" in that column.
-        If any column contains many answers, seperating each answer by ';'
-        Do NOT output any explanation or extra text.
-
-        ONLY find the information that suitable for each collumn.
-
-        The title is usually the main heading of the documents in the FIRST page.
-
-        ### Example Input Text:
-        "Employee Satisfaction and Productivity
-        This study explores the relationship between employee satisfaction and productivity.
-        Using Herzberg's Two-Factor Theory, we hypothesize that increased job satisfaction
-        positively impacts productivity. Data were collected from 200 employees in the IT sector
-        using a structured questionnaire. The findings show a strong correlation between satisfaction
-        and productivity, but limitations include a small sample size and focus only on one sector."
-
-        ### Example Correct Output:
-        Employee Satisfaction and Productivity\tEmployee satisfaction;Productivity\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\t200 employees in IT sector\tStrong correlation found\tSmall sample size;Only one sector
-
-        Now, process the following extracted text and produce ONLY the TSV line as per rules above:
-        {text}
-        """
-
 def is_valid_response(response: str) -> bool:
     if not response:
         return False
-    lines = [l.strip() for l in response.strip().splitlines() if l.strip()]
-    return any(line.count('\t') >= 7 for line in lines)
-
-def call_ollama(prompt: str, model: str) -> str:
-    """Calls the Ollama model locally."""
-    print(f"  [->] Calling Ollama model '{model}'...")
-    start_time = time.time()
-    try:
-        process = subprocess.run(
-            ["ollama", "run", model],
-            input=prompt, capture_output=True, text=True, encoding='utf-8', check=False, timeout=OLLAMA_TIMEOUT
-        )
-        print(f"  [<-] Ollama call finished in {time.time() - start_time:.2f}s. Exit code: {process.returncode}")
-        if process.returncode != 0:
-            print(f"  [x] Ollama Error Stderr: {process.stderr.strip()}")
-        return process.stdout.strip()
-    except FileNotFoundError:
-        print("  [x] 'Ollama' command not found. Is Ollama installed and in your PATH?")
-        return ""
-    except Exception as e:
-        print(f"  [x] An unexpected error occurred during the Ollama call: {e}")
-        return ""
+    parts = response.strip().split("\t")
+    return len(parts) == 8
 
 def extract_page_text(pdf_path, page_number):
     """
@@ -246,108 +269,40 @@ def is_important_page(page_text: str) -> bool:
     return False
 
 def extracted(pdf_path: Path):
-    """
-    Process a single PDF, scan important pages, call Ollama, return a list of extracted rows ["title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation"].
-    """
+    extractor_agent = create_extractor_agent(OLLAMA_MODEL)
+    aggregator_agent = create_aggregator_agent(OLLAMA_MODEL)
 
     page_infos = []
     main_title = ""
-    try:
-        doc = fitz.open(pdf_path)
-        num_pages = doc.page_count
-        doc.close()
-    except Exception as e:
-        print(f"[x] CRITICAL: Could not open PDF '{pdf_path.name}'. Skipping. Error: {e}")
-        return []
-    
-    print(f"\n[*] PDF has {num_pages} pages. Scanning all pages and extracting info...")
+    # Mở PDF và quét trang
+    doc = fitz.open(pdf_path)
+    num_pages = doc.page_count
+    print(f"\n---PDF has {num_pages} pages---")
     for page in range(num_pages):
-        print(f"-- Page {page + 1}/{num_pages} --")
-
+        print(f"--Page {page + 1}/{num_pages}--")
         page_text = extract_page_text(pdf_path, page)
         page_text_lower = page_text.lower()
-        
         if is_important_page(page_text_lower):
             clean_text = " ".join(page_text.split())
-            
-            if page == 0:
-                prompt_for_title = build_prompt(clean_text)
-                for attempt in range(3):
-                    response = call_ollama(prompt_for_title, OLLAMA_MODEL)
-                    response = response.replace("\r", " ").replace("\n", " ")
-                    if is_valid_response(response):
-                        print(f"  [Done] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
-                        # Add the valid rows to our list for this PDF
-                        page_infos.append(response.strip())
-                        parsed = next(csv.reader([response], delimiter="\t"))
-                        if parsed and parsed[0].strip():
-                            main_title = parsed[0].strip()
-                        break
-                    else:
-                        print(f"  [Failed] Invalid response on attempt {attempt + 1}/3. Retrying...")
-                        if response: 
-                            print(f"    (Invalid Response Sample: {response.strip()[:100]}...)")
-                        time.sleep(2)
-                continue
+            tsv_line = extractor_agent(clean_text)
 
-            if main_title:
-                clean_text = f"TITLE_OF_PAPER: {main_title}\n\n{clean_text}"
-            prompt = build_prompt(clean_text, main_title)
-            for attempt in range(3):
-                response = call_ollama(prompt, OLLAMA_MODEL)
-                if is_valid_response(response):
-                    print(f"  [Done] Valid data extracted from page {page + 1}")
-                    page_infos.append(response.strip())
-                    break
-                else:
-                    print(f"  [...] Retry attempt {attempt + 1}/3")
-                    time.sleep(2)
-            else:
-                print("[x] Failed to extract valid info.")
+            if is_valid_response(tsv_line):
+                page_infos.append(tsv_line)
+                if page == 0:
+                    parts = tsv_line.split("\t")
+                    if parts and parts[0].strip() != "Not Found":
+                        main_title = parts[0].strip()
         else:
-            print("[->] Skipping calling Ollama")
+            print("Skip...")
+    doc.close()
+
     if not page_infos:
         return ""
-    #call LLMs second time for summarizing
-    print("\n[->] Calling Ollama second time for summarizing.")
-    aggregate_prompt = f"""
-    You are an AI that aggregates extracted TSV rows from different pages of the same academic paper.
-    
-    You will be given a text, your mission is choosing the best answer for each column.
-    To be more specific, the title column must be one answer, the other columns can have more than 1 answer (each answer is separated by semicolons).
-    Each column is separated by '\t'.
 
-    DO NOT include "Here are the aggregated rows based on the given text snippets" or something like that in the output.
-    
-    Each row follows the format (no header row):
-    title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation
-
-    REMEMBER: just fill the information, not including the name of the column.
-    
-    Here are multiple extracted rows (TSV format), each from a different page of the PDF:
-    {chr(10).join(page_infos)}
-
-    ### Example Input Rows:
-    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\tStrong correlation found\tSmall sample size"
-    "Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector"
-
-    ### Example Correct Aggregated Output:
-    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector"
-
-    Formatting Rules:
-    - The Title column MUST NOT be empty(prefer using: {main_title if main_title else '[No title found]'}).
-    - Merge duplicate or overlapping data without repeating identical items.
-    - Keep the ORDER of columns EXACTLY as:
-    title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation
-    - If a column has multiple distinct values, separate them with semicolons.
-    - Columns may be empty if no information was found.
-    - Do **NOT** add any explanation or header row.
-    - If you cannot find the valid information from whole academic paper for which column, fill in the column: "Not Found".
-    """
-
-    final_row = call_ollama(aggregate_prompt, OLLAMA_MODEL)
-
-    return final_row.strip()
+    # Agent 2 tổng hợp
+    final_row = aggregator_agent(page_infos, main_title)
+    return final_row
+            
 
 def main():
     """Main function to parse arguments and drive the processing."""
@@ -385,8 +340,6 @@ def main():
         if not row:
             continue
         row = row.replace("\r", " ").replace("\n", " ")
-        for s in headers:
-            row = row.replace(s, "")
         with open("paper.tsv", "a", encoding="utf-8", newline="") as f:
             f.write(row + '\n')
 
