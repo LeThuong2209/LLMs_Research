@@ -9,4 +9,4 @@ beautifulsoup4
 crawl4ai
 asyncio
 langchain
-langchain_community
+langchain_ollama
