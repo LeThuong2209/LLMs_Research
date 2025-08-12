@@ -11,24 +11,24 @@ import json
 import pytesseract
 from pdf2image import convert_from_path
 import random
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 import asyncio
 from urllib.parse import urljoin
 import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from crawl4ai import AsyncWebCrawler
 from langchain_ollama import ChatOllama
 from langchain.prompts import PromptTemplate
 
-OLLAMA_MODEL = 'mistral'
+OLLAMA_MODEL = 'llama3'
 OLLAMA_TIMEOUT = 300 
 
 # =====Agent 1: Extractor Agent=====
-def create_extractor_agent(model_name="mistral"):
+def create_extractor_agent(model_name=OLLAMA_MODEL):
     llm = ChatOllama(model=model_name)
 
     extract_prompt = PromptTemplate.from_template("""
@@ -79,7 +79,7 @@ def create_extractor_agent(model_name="mistral"):
 
 
 # =====Agent 2: Aggregator Agent=====
-def create_aggregator_agent(model_name="mistral"):
+def create_aggregator_agent(model_name=OLLAMA_MODEL):
     llm = ChatOllama(model=model_name)
 
     aggregate_prompt = PromptTemplate.from_template("""
@@ -214,7 +214,7 @@ def is_valid_response(response: str) -> bool:
     if not response:
         return False
     parts = response.strip().split("\t")
-    return len(parts) == 8
+    return len(parts) > 7
 
 def extract_page_text(pdf_path, page_number):
     """
@@ -272,6 +272,29 @@ def is_important_page(page_text: str) -> bool:
             return True
     return False
 
+def extract_title_from_pdf(pdf_path) -> str:
+    doc = fitz.open(pdf_path)
+    first_page = doc[0]
+    blocks = first_page.get_text("dict")["blocks"]
+
+    # Lấy các đoạn text kèm font size
+    candidates = []
+    for block in blocks:
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = span["text"].strip()
+                font_size = span["size"]
+                
+                # Lọc những đoạn có khả năng là title
+                if 5 <= len(text.split()) <= 20 and not text.endswith(".") and not any(c.isdigit() for c in text) and font_size > 10:  # font lớn hơn mức cơ bản
+                    candidates.append((text, font_size))
+
+    # Chọn đoạn có font size lớn nhất
+    if candidates:
+        title = max(candidates, key=lambda x: x[1])[0]
+        return title
+    return None
+
 def extracted(pdf_path: Path):
     extractor_agent = create_extractor_agent(OLLAMA_MODEL)
     aggregator_agent = create_aggregator_agent(OLLAMA_MODEL)
@@ -292,11 +315,12 @@ def extracted(pdf_path: Path):
 
             if is_valid_response(tsv_line):
                 page_infos.append(tsv_line)
-                if page == 0:
-                    parts = tsv_line.split("\t")
-                    if parts and parts[0].strip() != "Not Found":
-                        main_title = parts[0].strip()
+                if page == 0 or page == 1:
+                    main_title = extract_title_from_pdf(pdf_path)
                 print("[->] Valid infor extracted")
+            else:
+                print("[...] The response is not valid")
+
         else:
             print("Skip...")
     doc.close()
