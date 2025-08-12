@@ -92,14 +92,12 @@ async def get_pdf(urls):
     
 def download_pdf(pdf_link, output_dir):
     try:
-        # Lấy tên file từ URL, bỏ tham số phía sau
         file_name = os.path.basename(pdf_link.split('?')[0])
         if not file_name.lower().endswith(".pdf"):
             file_name += ".pdf"
 
         file_path = os.path.join(output_dir, file_name)
 
-        # Fake User-Agent để tránh 403
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                  'AppleWebKit/537.36 (KHTML, like Gecko) '
                                  'Chrome/115.0 Safari/537.36',
@@ -111,9 +109,9 @@ def download_pdf(pdf_link, output_dir):
 
         with open(file_path, 'wb') as f:
             f.write(r.content)
-        print(f"[✓] Downloaded: {file_path}")
+        print(f"Successfully Downloaded: {file_path}")
     except Exception as e:
-        print(f"[x] Fail to download {pdf_link}: {e}")
+        print(f"Fail to download {pdf_link}: {e}")
 
 def build_prompt(text: str, main_title = ""):
     title_hint = ""
@@ -135,12 +133,15 @@ def build_prompt(text: str, main_title = ""):
         7. The last findings of the research
         8. The limitation of the research
 
-        Output EXACTLY one line of TSV with 8 columns separated by tabs (\t), in this order:
+        Output EXACTLY one line of TSV with 8 columns separated by tabs (\t), no more, no less, in this order:
         Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
 
         NEVER output contains a header row. 
         NEVER output contains the content of the header row, only contains the info.
+        DO NOT contains the unrelevant information.
+
         If any field is not found, write "Not Found" in that column.
+        If any column contains many answers, seperating each answer by ';'
         If any field contains a semicolon, enclose it in double quotes.
         Do NOT output any explanation or extra text.
 
@@ -180,13 +181,13 @@ def call_ollama(prompt: str, model: str) -> str:
         )
         print(f"  [<-] Ollama call finished in {time.time() - start_time:.2f}s. Exit code: {process.returncode}")
         if process.returncode != 0:
-            print(f"  [❌] Ollama Error Stderr: {process.stderr.strip()}")
+            print(f"  [x] Ollama Error Stderr: {process.stderr.strip()}")
         return process.stdout.strip()
     except FileNotFoundError:
-        print("  [❌] 'Ollama' command not found. Is Ollama installed and in your PATH?")
+        print("  [x] 'Ollama' command not found. Is Ollama installed and in your PATH?")
         return ""
     except Exception as e:
-        print(f"  [❌] An unexpected error occurred during the Ollama call: {e}")
+        print(f"  [x] An unexpected error occurred during the Ollama call: {e}")
         return ""
 
 def extract_page_text(pdf_path, page_number):
@@ -199,29 +200,29 @@ def extract_page_text(pdf_path, page_number):
             page = doc.load_page(page_number)
             digital_text = page.get_text().strip()
     except Exception as e:
-        print(f"[❌] Error extracting digital text from page {page_number + 1}: {e}")
+        print(f"[x] Error extracting digital text from page {page_number + 1}: {e}")
         return ""
 
     # If digital text is sparse, assume it's a scanned page and run OCR
     if len(digital_text) < 200:
-        print(f"[🧾] Page {page_number + 1}: Digital text is sparse. Running OCR as a fallback...")
+        print(f"[**] Page {page_number + 1}: Digital text is sparse. Running OCR as a fallback...")
         try:
             images = convert_from_path(str(pdf_path), first_page=page_number + 1, last_page=page_number + 1, dpi=300)
             if not images:
-                print(f"[❌] pdf2image conversion failed for page {page_number + 1}.")
+                print(f"[x] pdf2image conversion failed for page {page_number + 1}.")
                 return ""
 
-            print(f"[🔍] Running Tesseract OCR on page {page_number + 1}...")
+            print(f"[...] Running Tesseract OCR on page {page_number + 1}...")
             start_time = time.time()
             ocr_text = pytesseract.image_to_string(images[0], lang='eng').strip()
-            print(f"[✅] Tesseract OCR for page {page_number + 1} finished in {time.time() - start_time:.2f}s.")
+            print(f"[**] Tesseract OCR for page {page_number + 1} finished in {time.time() - start_time:.2f}s.")
             # Return the more detailed text (OCR or digital)
             return ocr_text if len(ocr_text) > len(digital_text) else digital_text
         except Exception as e:
-            print(f"[❌] Error during OCR for page {page_number + 1}: {e}. Is poppler-utils installed?")
+            print(f"[x] Error during OCR for page {page_number + 1}: {e}. Is poppler-utils installed?")
             return digital_text  # Return whatever digital text was found
     else:
-        print(f"[📝] Page {page_number + 1}: Digital text detected (length: {len(digital_text)}).")
+        print(f"[**] Page {page_number + 1}: Digital text detected (length: {len(digital_text)}).")
         return digital_text
     
 def is_important_page(page_text: str) -> bool:
@@ -257,7 +258,7 @@ def extracted(pdf_path: Path):
         num_pages = doc.page_count
         doc.close()
     except Exception as e:
-        print(f"[❌] CRITICAL: Could not open PDF '{pdf_path.name}'. Skipping. Error: {e}")
+        print(f"[x] CRITICAL: Could not open PDF '{pdf_path.name}'. Skipping. Error: {e}")
         return []
     
     print(f"\n[*] PDF has {num_pages} pages. Scanning all pages and extracting info...")
@@ -276,7 +277,7 @@ def extracted(pdf_path: Path):
                     response = call_ollama(prompt_for_title, OLLAMA_MODEL)
                     response = response.replace("\r", " ").replace("\n", " ")
                     if is_valid_response(response):
-                        print(f"  [✅] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
+                        print(f"  [Done] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
                         # Add the valid rows to our list for this PDF
                         page_infos.append(response.strip())
                         parsed = next(csv.reader([response], delimiter="\t"))
@@ -284,7 +285,7 @@ def extracted(pdf_path: Path):
                             main_title = parsed[0].strip()
                         break
                     else:
-                        print(f"  [🔁] Invalid response on attempt {attempt + 1}/3. Retrying...")
+                        print(f"  [Failed] Invalid response on attempt {attempt + 1}/3. Retrying...")
                         if response: 
                             print(f"    (Invalid Response Sample: {response.strip()[:100]}...)")
                         time.sleep(2)
@@ -296,11 +297,11 @@ def extracted(pdf_path: Path):
             for attempt in range(3):
                 response = call_ollama(prompt, OLLAMA_MODEL)
                 if is_valid_response(response):
-                    print(f"  [✅] Valid data extracted from page {page + 1}")
+                    print(f"  [Done] Valid data extracted from page {page + 1}")
                     page_infos.append(response.strip())
                     break
                 else:
-                    print(f"  [🔁] Retry attempt {attempt + 1}/3")
+                    print(f"  [...] Retry attempt {attempt + 1}/3")
                     time.sleep(2)
             else:
                 print("[x] Failed to extract valid info.")
@@ -308,16 +309,20 @@ def extracted(pdf_path: Path):
             print("[->] Skipping calling Ollama")
     if not page_infos:
         return ""
-    # Gọi LLM lần 2 để tổng hợp
+    #call LLMs second time for summarizing
     print("\n[->] Calling Ollama second time for summarizing.")
     aggregate_prompt = f"""
     You are an AI that aggregates extracted TSV rows from different pages of the same academic paper.
     
     You will be given a text, your mission is choosing the best answer for each column.
-
+    To be more specific, the title column must be one answer, the other columns can have more than 1 answer (each answer is seperated by comma)
+    DO NOT include "Here are the aggregated rows based on the given text snippets" or something like that in the output.
+    
     Each row follows the format (no header row):
     title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation
-    REMEMBER: just fill the information, not including the name of the column
+
+    REMEMBER: just fill the information, not including the name of the column.
+    
     Here are multiple extracted rows (TSV format), each from a different page of the PDF:
     {chr(10).join(page_infos)}
 
@@ -368,12 +373,11 @@ def main():
 
     headers = ["Title", "Variables", "Theories", "Hypotheses",
             "Methodology", "Dataset(s)", "Results", "Limitation"]
-    # Ghi header một lần ở đầu
+
     with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter='\t')
         writer.writerow(headers)
 
-    # Sau đó append kết quả của từng PDF
     for pdf_file in Path(output_dir).glob("*.pdf"):
         row = extracted(pdf_file)
         row = row.strip()
