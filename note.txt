@@ -1,4 +1,5 @@
 To repair:
+    Open the terminal(Mac OS)/ the command prompt(Window)
     cd this_folder's path
     pip install -r requirments.txt
 To run this code:
