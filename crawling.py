@@ -135,13 +135,16 @@ def build_prompt(text: str, main_title = ""):
         7. The last findings of the research
         8. The limitation of the research
 
-        Output exactly one line of TSV with 8 columns separated by tabs (\t), in this order:
+        Output EXACTLY one line of TSV with 8 columns separated by tabs (\t), in this order:
         Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
 
         NEVER output contains a header row. 
-        If any field is not found, leave it blank but keep the semicolons.
+        NEVER output contains the content of the header row, only contains the info.
+        If any field is not found, write "Not Found" in that column.
         If any field contains a semicolon, enclose it in double quotes.
         Do NOT output any explanation or extra text.
+
+        ONLY find the information that suitable for each collumn.
 
         The title is usually the main heading of the documents in the FIRST page.
 
@@ -244,7 +247,7 @@ def is_important_page(page_text: str) -> bool:
 
 def extracted(pdf_path: Path):
     """
-    Process a single PDF, scan important pages, call Ollama, return a list of extracted rows ["title;variables;theories;hypotheses;methodology;dataset(s);results;limitation."].
+    Process a single PDF, scan important pages, call Ollama, return a list of extracted rows ["title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation"].
     """
 
     page_infos = []
@@ -271,6 +274,7 @@ def extracted(pdf_path: Path):
                 prompt_for_title = build_prompt(clean_text)
                 for attempt in range(3):
                     response = call_ollama(prompt_for_title, OLLAMA_MODEL)
+                    response = response.replace("\r", " ").replace("\n", " ")
                     if is_valid_response(response):
                         print(f"  [✅] Valid information data extracted from page {page + 1} on attempt {attempt + 1}.")
                         # Add the valid rows to our list for this PDF
@@ -308,27 +312,27 @@ def extracted(pdf_path: Path):
     print("\n[->] Calling Ollama second time for summarizing.")
     aggregate_prompt = f"""
     You are an AI that aggregates extracted TSV rows from different pages of the same academic paper.
+    
+    You will be given a text, your mission is choosing the best answer for each column.
 
     Each row follows the format (no header row):
-    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
-
+    title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation
+    REMEMBER: just fill the information, not including the name of the column
     Here are multiple extracted rows (TSV format), each from a different page of the PDF:
     {chr(10).join(page_infos)}
 
     ### Example Input Rows:
-    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\t\tStrong correlation found\tSmall sample size"
-    "Employee Satisfaction and Productivity\t\tHerzberg's Two-Factor Theory\t\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector"
+    "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research\tStrong correlation found\tSmall sample size"
+    "Employee Satisfaction and Productivity\tHerzberg's Two-Factor Theory\tStructured interviews\t200 employees in IT sector\tPositive relationship observed\tOnly one sector"
 
     ### Example Correct Aggregated Output:
     "Employee Satisfaction and Productivity\tEmployee satisfaction\tHerzberg's Two-Factor Theory\tJob satisfaction positively impacts productivity\tSurvey research;Structured interviews\t200 employees in IT sector\tStrong correlation found;Positive relationship observed\tSmall sample size;Only one sector"
 
-    Now, aggregate the actual extracted rows provided above into exactly ONE final TSV row with 8 columns in the same order.
-
     Formatting Rules:
     - The Title column MUST NOT be empty(prefer using: {main_title if main_title else '[No title found]'}).
     - Merge duplicate or overlapping data without repeating identical items.
-    - Keep the order of columns EXACTLY as:
-    Title\tVariables\tTheories\tHypotheses\tMethodology\tDataset(s)\tResults\tLimitation
+    - Keep the ORDER of columns EXACTLY as:
+    title\tvariables\ttheories\thypotheses\tmethodology\tdataset(s)\tresults\tlimitation
     - If a column has multiple distinct values, separate them with semicolons.
     - Columns may be empty if no information was found.
     - Do **NOT** add any explanation or header row.
@@ -361,23 +365,26 @@ def main():
     print(f"\nFound {len(pdf_links)} PDF links:")
     for link in pdf_links:
         download_pdf(link, output_dir)
-    
-    with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, delimiter='\t')  # Dùng tab thay vì ;
-        writer.writerow([
-            "Title", "Variables", "Theories", "Hypotheses",
-            "Methodology", "Dataset(s)", "Results", "Limitation"
-        ])
 
+    headers = ["Title", "Variables", "Theories", "Hypotheses",
+            "Methodology", "Dataset(s)", "Results", "Limitation"]
+    # Ghi header một lần ở đầu
+    with open("paper.tsv", "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter='\t')
+        writer.writerow(headers)
+
+    # Sau đó append kết quả của từng PDF
     for pdf_file in Path(output_dir).glob("*.pdf"):
         row = extracted(pdf_file)
         row = row.strip()
         if not row:
             continue
         row = row.replace("\r", " ").replace("\n", " ")
+        for s in headers:
+            row = row.replace(s, "")
         parsed = next(csv.reader([row], delimiter='\t'))
-        with open("paper.tsv", "a", encoding="utf-8", newline="") as f: 
-            writer = csv.writer(f, delimiter='\t')  # Dùng tab thay vì ;
+        with open("paper.tsv", "a", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f, delimiter='\t')
             writer.writerow(parsed)
 
 if __name__ == '__main__':
