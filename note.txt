@@ -1,9 +1,16 @@
 To repair:
     Open the terminal(Mac OS)/ the command prompt(Window)
     cd this_folder's path
+    create a virtual environment: python -m venv venv
+    Activate the virtual environment: 
+        Windows (PowerShell): .\venv\Scripts\Activate
+        Windows (cmd): venv\Scripts\activate
+        Mac Os/Linux: source venv/bin/activate
     pip install -r requirments.txt
+    
 To run this code:
     python3 crawling.py
+    
 Output: a json file with all pdf links that collected
         a pdf_save folder that saves all pdf files collected from links
         a paper.tsv that contains the information.
