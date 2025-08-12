@@ -142,7 +142,6 @@ def build_prompt(text: str, main_title = ""):
 
         If any field is not found, write "Not Found" in that column.
         If any column contains many answers, seperating each answer by ';'
-        If any field contains a semicolon, enclose it in double quotes.
         Do NOT output any explanation or extra text.
 
         ONLY find the information that suitable for each collumn.
@@ -315,7 +314,9 @@ def extracted(pdf_path: Path):
     You are an AI that aggregates extracted TSV rows from different pages of the same academic paper.
     
     You will be given a text, your mission is choosing the best answer for each column.
-    To be more specific, the title column must be one answer, the other columns can have more than 1 answer (each answer is seperated by comma)
+    To be more specific, the title column must be one answer, the other columns can have more than 1 answer (each answer is separated by semicolons).
+    Each column is separated by '\t'.
+
     DO NOT include "Here are the aggregated rows based on the given text snippets" or something like that in the output.
     
     Each row follows the format (no header row):
@@ -386,10 +387,8 @@ def main():
         row = row.replace("\r", " ").replace("\n", " ")
         for s in headers:
             row = row.replace(s, "")
-        parsed = next(csv.reader([row], delimiter='\t'))
         with open("paper.tsv", "a", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f, delimiter='\t')
-            writer.writerow(parsed)
+            f.write(row + '\n')
 
 if __name__ == '__main__':
     main()
