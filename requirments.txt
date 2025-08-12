@@ -8,3 +8,5 @@ webdriver-manager
 beautifulsoup4
 crawl4ai
 asyncio
+langchain
+langchain_community
