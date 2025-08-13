@@ -29,7 +29,7 @@ OLLAMA_TIMEOUT = 400
 
 # =====Agent 1: Extractor Agent=====
 def create_extractor_agent(model_name=OLLAMA_MODEL):
-    llm = ChatOllama(model=model_name)
+    llm = ChatOllama(model=model_name, temperature=0)
 
     extract_prompt = PromptTemplate.from_template("""
     You are an AI specialized in analyzing academic papers.
@@ -72,6 +72,8 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
                                                       
     ===== Now process this text and produce ONLY the TSV line: =====
     {text}
+                                                  
+    **Output ONLY the final TSV line — NOTHING else. No explanations, no headers, no introductions.**
     """)
     
     def extractor(page_text: str) -> str:
@@ -84,7 +86,7 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
 
 # =====Agent 2: Aggregator Agent=====
 def create_aggregator_agent(model_name=OLLAMA_MODEL):
-    llm = ChatOllama(model=model_name)
+    llm = ChatOllama(model=model_name, temperature=0)
 
     aggregate_prompt = PromptTemplate.from_template("""
     You are an AI that aggregates multiple TSV rows extracted from different pages of the same research paper.
@@ -120,6 +122,8 @@ def create_aggregator_agent(model_name=OLLAMA_MODEL):
                                                                
     ===== Rows to process =====
     {rows}
+    
+    **Output ONLY the final TSV line — NOTHING else. No explanations, no headers, no introductions.**
     """)
 
     def aggregator(tsv_rows: List[str], title_hint: str = "") -> str:
