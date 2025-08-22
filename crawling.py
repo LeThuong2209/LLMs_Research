@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 import asyncio
 from urllib.parse import urljoin
 import time
+import sys
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -346,26 +347,32 @@ def extracted(pdf_path: Path):
 
 def main():
     """Main function to parse arguments and drive the processing."""
-    key_word = input("Enter the keyword: ")
-    pages = int(input("Enter how many pages you want to get (3 is the default): "))
-    output_dir = './pdf_save'
-    os.makedirs(output_dir, exist_ok=True)
+    # key_word = input("Enter the keyword: ")
+    # pages = int(input("Enter how many pages you want to get (3 is the default): "))
+    # output_dir = './pdf_save'
+    # os.makedirs(output_dir, exist_ok=True)
 
-    urls = get_urls(key_word, pages)
-    num_url = len(urls)
+    # urls = get_urls(key_word, pages)
+    # num_url = len(urls)
 
-    print(f"Find {num_url} results: ")
-    for url in urls:
-        print(url)
+    # print(f"Find {num_url} results: ")
+    # for url in urls:
+    #     print(url)
         
-    pdf_links = asyncio.run(get_pdf(urls))
-    #save pdf links in a json file  
-    with open("pdf_links.json", "w", encoding="utf-8") as f:
-        json.dump(pdf_links, f, ensure_ascii=False, indent=2)
+    # pdf_links = asyncio.run(get_pdf(urls))
+    # #save pdf links in a json file  
+    # with open("pdf_links.json", "w", encoding="utf-8") as f:
+    #     json.dump(pdf_links, f, ensure_ascii=False, indent=2)
 
-    print(f"\nFound {len(pdf_links)} PDF links:")
-    for link in pdf_links:
-        download_pdf(link, output_dir)
+    # print(f"\nFound {len(pdf_links)} PDF links:")
+    # for link in pdf_links:
+    #     download_pdf(link, output_dir)
+
+    if len(sys.argv) < 2:
+        sys.exit()
+
+    output_dir = sys.argv[1]
+
 
     headers = ["Title", "Variables", "Theories", "Hypotheses",
             "Methodology", "Dataset(s)", "Findings", "Limitation"]
