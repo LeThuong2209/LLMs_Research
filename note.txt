@@ -9,8 +9,7 @@ To repair:
     pip install -r requirments.txt
     
 To run this code:
-    python3 crawling.py
+    python3 crawling.py 'folder's name'
     
-Output: a json file with all pdf links that collected
-        a pdf_save folder that saves all pdf files collected from links
+Output: a pdf_save folder that saves all pdf files collected from links
         a paper.tsv that contains the information.
