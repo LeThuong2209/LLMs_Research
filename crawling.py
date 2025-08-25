@@ -50,10 +50,10 @@ def create_extractor_agent(model_name=OLLAMA_MODEL):
        - **Variables**: All studied variables or factors (independent, dependent, control, etc.).
        - **Theories**: Theories, models, or conceptual frameworks used.
        - **Hypotheses**: Research hypotheses or predictions stated in the text.
-       - **Methodology**: Research design/method (e.g., survey, experiment, case study).
+       - **Methodology**: The method used for making this research.
        - **Dataset(s)**: Information about the dataset — sample size, source, demographic, etc.
-       - **Findings**: Main findings, correlations, or conclusions.
-       - **Limitation**: Study limitations, weaknesses, or constraints.
+       - **Findings**: Main findings, correlations, or conclusions of the research.
+       - **Limitation**: Study's limitations, weaknesses, or constraints.
     6. **Do NOT add extra tabs or columns** — exactly 7 tabs in the output.
     7. ONLY including the information, not repeating the title.
 
